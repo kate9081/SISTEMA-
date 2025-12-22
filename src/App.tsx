@@ -18,19 +18,40 @@ import NotFound from './pages/NotFound';
 
 const queryClient = new QueryClient();
 
+// === 1. PROTECCIÓN DE RUTAS PRIVADAS ===
+// Si NO hay usuario, manda al login.
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
+  const user = useAuthStore((state) => state.user);
+  // Verificamos si existe el objeto usuario (así sabemos si está logueado)
+  return user ? <>{children}</> : <Navigate to="/login" replace />;
+};
+
+// === 2. PROTECCIÓN DE RUTA PÚBLICA (LOGIN) ===
+// Si YA hay usuario, manda al dashboard (para que no vea el login de nuevo)
+const PublicRoute = ({ children }: { children: React.ReactNode }) => {
+  const user = useAuthStore((state) => state.user);
+  return user ? <Navigate to="/" replace /> : <>{children}</>;
 };
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Toaster />
+      {/* RichColors hace que los mensajes de éxito/error se vean mejor */}
+      <Toaster richColors position="top-center" />
+      
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<Login />} />
+          {/* Ruta de Login (Envuelt en PublicRoute) */}
+          <Route 
+            path="/login" 
+            element={
+              <PublicRoute>
+                <Login />
+              </PublicRoute>
+            } 
+          />
           
+          {/* Rutas Protegidas */}
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/inventory" element={<ProtectedRoute><Inventory /></ProtectedRoute>} />
           <Route path="/professionals" element={<ProtectedRoute><Professionals /></ProtectedRoute>} />
@@ -40,6 +61,7 @@ const App = () => (
           <Route path="/aid-delivery" element={<ProtectedRoute><AidDelivery /></ProtectedRoute>} />
           <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
           
+          {/* Ruta 404 */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

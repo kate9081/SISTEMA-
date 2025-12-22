@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import MainLayout from "@/components/layout/MainLayout"; 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Search, Trash2, Edit, ChevronLeft, ChevronRight } from "lucide-react";
-import { useAppStore } from "@/store/useAppStore";
+import { Plus, Search, Trash2, Edit, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   Dialog,
@@ -23,31 +22,23 @@ import {
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Beneficiary } from "@/types";
+// Nota: BulkImportButton requeriría lógica backend propia para funcionar con SQL.
 import { BulkImportButton } from "@/components/ui/BulkImportButton";
 
 export default function Beneficiaries() {
-  const { 
-    beneficiaries, 
-    deleteBeneficiary, 
-    addBeneficiary, 
-    updateBeneficiary, 
-    clearBeneficiaries 
-  } = useAppStore();
-  
   const { user } = useAuthStore();
 
-  // === LÓGICA DE PERMISOS ESTRICTA ===
+  // === LÓGICA DE PERMISOS ===
   const p = user?.permissions || { create: false, read: false, update: false, delete: false };
-  
-  // 1. Si tiene CUALQUIER permiso, puede ver el módulo.
   const canView = p.read || p.create || p.update || p.delete;
-  
-  // 2. Permisos específicos para botones
   const canCreate = p.create;
   const canUpdate = p.update;
   const canDelete = p.delete;
-  // ====================================
 
+  // === ESTADOS (Datos desde SQL) ===
+  const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  
   const [searchTerm, setSearchTerm] = useState("");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingBeneficiary, setEditingBeneficiary] = useState<Beneficiary | null>(null);
@@ -57,7 +48,30 @@ export default function Beneficiaries() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50; 
 
-  // SI NO TIENE PERMISO DE VER, RETORNA PANTALLA DE BLOQUEO
+  // === 1. CARGAR DATOS DESDE SQL ===
+  const fetchBeneficiaries = async () => {
+    setIsLoading(true);
+    try {
+        const res = await fetch('http://localhost:3001/api/beneficiarios');
+        const data = await res.json();
+        if (data.success) {
+            setBeneficiaries(data.data);
+        } else {
+            toast.error("Error al cargar datos");
+        }
+    } catch (error) {
+        console.error(error);
+        toast.error("Error de conexión con el servidor");
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (canView) fetchBeneficiaries();
+  }, [canView]);
+
+  // SI NO TIENE PERMISO DE VER
   if (!canView) {
     return (
         <MainLayout>
@@ -68,51 +82,84 @@ export default function Beneficiaries() {
     );
   }
 
+  // === 2. GUARDAR (INSERT / UPDATE) ===
+  const handleSave = async () => {
+    if (!formData.rut || !formData.firstName || !formData.lastName) {
+        toast.error("Faltan datos obligatorios (RUT, Nombre, Apellido)");
+        return;
+    }
+
+    try {
+        let url = 'http://localhost:3001/api/beneficiarios/agregar';
+        let method = 'POST';
+
+        if (editingBeneficiary) {
+            url = 'http://localhost:3001/api/beneficiarios/editar';
+            method = 'PUT';
+        }
+
+        const res = await fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        });
+
+        if (res.ok) {
+            toast.success(editingBeneficiary ? "Beneficiario actualizado" : "Beneficiario creado");
+            setIsCreateModalOpen(false);
+            fetchBeneficiaries(); // Recargar tabla
+        } else {
+            const err = await res.json();
+            toast.error("Error: " + (err.error || "No se pudo guardar"));
+        }
+    } catch (error) {
+        toast.error("Error de conexión");
+    }
+  };
+
+  // === 3. ELIMINAR ===
+  const handleDelete = async (rut: string) => {
+    if (!canDelete) return;
+    if (!confirm('¿Estás seguro de eliminar este beneficiario de la base de datos?')) return;
+    
+    try {
+        const res = await fetch(`http://localhost:3001/api/beneficiarios/borrar/${rut}`, { method: 'DELETE' });
+        if (res.ok) {
+            toast.success('Beneficiario eliminado');
+            fetchBeneficiaries();
+        } else {
+            toast.error("Error al eliminar");
+        }
+    } catch (error) {
+        toast.error("Error de conexión");
+    }
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
   
-  // === LÓGICA DE BÚSQUEDA INTELIGENTE ===
+  // === LÓGICA DE BÚSQUEDA ===
   const cleanString = (str: string) => (str || '').replace(/[\.\-\s]/g, '').toLowerCase();
-
+  
   const filteredBeneficiaries = beneficiaries.filter((b) => {
     const term = cleanString(searchTerm);
     const rutClean = cleanString(b.rut);
     const nameClean = cleanString(`${b.firstName} ${b.lastName}`);
-    
     return rutClean.includes(term) || nameClean.includes(term);
   });
-  // ========================================
 
   const totalPages = Math.ceil(filteredBeneficiaries.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentBeneficiaries = filteredBeneficiaries.slice(startIndex, endIndex);
-
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(e.target.value);
-    setCurrentPage(1); 
-  };
-
-  const handleClearAll = () => {
-    // PROTECCIÓN LÓGICA
-    if (!canDelete) return;
-
-    if (confirm(`¿Estás SEGURO de eliminar todos los ${beneficiaries.length} beneficiarios? Esta acción no se puede deshacer.`)) {
-      // @ts-ignore
-      clearBeneficiaries(); 
-      toast.success("Base de datos de beneficiarios vaciada correctamente.");
-      setCurrentPage(1);
-    }
-  };
+  const currentBeneficiaries = filteredBeneficiaries.slice(startIndex, startIndex + itemsPerPage);
 
   const handleOpenDialog = (beneficiary?: Beneficiary) => {
     if (beneficiary) {
-        if (!canUpdate) return; // Protección
+        if (!canUpdate) return;
         setEditingBeneficiary(beneficiary);
         setFormData(beneficiary);
     } else {
-        if (!canCreate) return; // Protección
+        if (!canCreate) return;
         setEditingBeneficiary(null);
         setFormData({});
     }
@@ -124,24 +171,16 @@ export default function Beneficiaries() {
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-gray-900">Beneficiarios</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-gray-900">Beneficiarios (SQL)</h1>
             <p className="text-gray-500 mt-2">
-              Gestión del padrón ({beneficiaries.length} registros totales)
+              Gestión del padrón ({beneficiaries.length} registros)
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             
-            {/* BOTÓN VACIAR: SOLO SI PUEDE ELIMINAR */}
-            {canDelete && beneficiaries.length > 0 && (
-              <Button 
-                variant="destructive" 
-                onClick={handleClearAll}
-                className="gap-2"
-              >
-                <Trash2 className="h-4 w-4" />
-                Vaciar Tabla
-              </Button>
-            )}
+            <Button variant="outline" onClick={fetchBeneficiaries} disabled={isLoading}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} /> Recargar
+            </Button>
 
             {/* BOTONES CREAR: SOLO SI PUEDE CREAR */}
             {canCreate && (
@@ -161,7 +200,7 @@ export default function Beneficiaries() {
           <Input
             placeholder="Buscar RUT (ej: 12345678) o nombre..."
             value={searchTerm}
-            onChange={handleSearch}
+            onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
             className="border-0 focus-visible:ring-0"
           />
         </div>
@@ -174,12 +213,14 @@ export default function Beneficiaries() {
                 <TableHead>Nombre</TableHead>
                 <TableHead>Dirección</TableHead>
                 <TableHead>Teléfono</TableHead>
-                {/* COLUMNA ACCIONES: SOLO SI PUEDE EDITAR O ELIMINAR */}
+                {/* COLUMNA ACCIONES */}
                 {(canUpdate || canDelete) && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {currentBeneficiaries.length === 0 ? (
+              {isLoading ? (
+                  <TableRow><TableCell colSpan={5} className="text-center py-8">Cargando datos desde SQL...</TableCell></TableRow>
+              ) : currentBeneficiaries.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-8 text-gray-500">
                     {searchTerm ? "No se encontraron resultados" : "No hay beneficiarios registrados"}
@@ -187,7 +228,7 @@ export default function Beneficiaries() {
                 </TableRow>
               ) : (
                 currentBeneficiaries.map((beneficiary) => (
-                  <TableRow key={beneficiary.id}>
+                  <TableRow key={beneficiary.id || beneficiary.rut}>
                     <TableCell className="font-medium">{beneficiary.rut}</TableCell>
                     <TableCell>{beneficiary.firstName} {beneficiary.lastName}</TableCell>
                     <TableCell className="max-w-[200px] truncate" title={beneficiary.address}>
@@ -199,29 +240,16 @@ export default function Beneficiaries() {
                     {(canUpdate || canDelete) && (
                         <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                            {/* BOTÓN EDITAR */}
+                            {/* EDITAR */}
                             {canUpdate && (
-                                <Button 
-                                variant="ghost" 
-                                size="icon"
-                                onClick={() => handleOpenDialog(beneficiary)}
-                                >
+                                <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(beneficiary)}>
                                 <Edit className="h-4 w-4 text-gray-500" />
                                 </Button>
                             )}
                             
-                            {/* BOTÓN ELIMINAR */}
+                            {/* ELIMINAR */}
                             {canDelete && (
-                                <Button 
-                                variant="ghost" 
-                                size="icon"
-                                onClick={() => {
-                                    if(confirm('¿Estás seguro de eliminar este beneficiario?')) {
-                                    deleteBeneficiary(beneficiary.rut);
-                                    toast.success('Beneficiario eliminado');
-                                    }
-                                }}
-                                >
+                                <Button variant="ghost" size="icon" onClick={() => handleDelete(beneficiary.rut)}>
                                 <Trash2 className="h-4 w-4 text-red-500" />
                                 </Button>
                             )}
@@ -238,7 +266,7 @@ export default function Beneficiaries() {
         {filteredBeneficiaries.length > 0 && (
           <div className="flex items-center justify-between px-2 py-4">
             <div className="text-sm text-gray-500">
-              Mostrando {startIndex + 1} a {Math.min(endIndex, filteredBeneficiaries.length)} de {filteredBeneficiaries.length} resultados
+              Página {currentPage} de {totalPages}
             </div>
             <div className="flex gap-2">
               <Button
@@ -254,7 +282,7 @@ export default function Beneficiaries() {
                 variant="outline"
                 size="sm"
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages || totalPages === 0}
+                disabled={currentPage === totalPages}
               >
                 Siguiente
                 <ChevronRight className="h-4 w-4 ml-1" />
@@ -263,13 +291,7 @@ export default function Beneficiaries() {
           </div>
         )}
 
-        <Dialog open={isCreateModalOpen} onOpenChange={(open) => {
-          setIsCreateModalOpen(open);
-          if (!open) {
-            setEditingBeneficiary(null);
-            setFormData({});
-          }
-        }}>
+        <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingBeneficiary ? 'Editar Beneficiario' : 'Nuevo Beneficiario'}</DialogTitle>
@@ -278,7 +300,8 @@ export default function Beneficiaries() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="rut">RUT</Label>
-                  <Input id="rut" name="rut" value={formData.rut || ''} onChange={handleInputChange} placeholder="12.345.678-9" />
+                  {/* Deshabilitamos RUT si editamos (llave primaria) */}
+                  <Input id="rut" name="rut" value={formData.rut || ''} onChange={handleInputChange} placeholder="12.345.678-9" disabled={!!editingBeneficiary} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="firstName">Nombres</Label>
@@ -304,29 +327,7 @@ export default function Beneficiaries() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
-              <Button onClick={() => {
-                if (!formData.rut || !formData.firstName || !formData.lastName) {
-                  toast.error("Faltan datos obligatorios");
-                  return;
-                }
-                
-                const uniqueId = typeof crypto !== 'undefined' && crypto.randomUUID 
-                    ? crypto.randomUUID() 
-                    : `ben-${Date.now()}`;
-
-                if (editingBeneficiary) {
-                  updateBeneficiary(editingBeneficiary.rut, formData); 
-                  toast.success("Beneficiario actualizado");
-                } else {
-                  addBeneficiary({
-                    id: uniqueId,
-                    ...formData,
-                    registrationDate: new Date().toISOString()
-                  } as any);
-                  toast.success("Beneficiario creado");
-                }
-                setIsCreateModalOpen(false);
-              }}>Guardar</Button>
+              <Button onClick={handleSave} className="bg-blue-600 hover:bg-blue-700">Guardar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

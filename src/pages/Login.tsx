@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useAppStore } from '@/store/useAppStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Eye, EyeOff, Mail } from 'lucide-react';
+import { Eye, EyeOff, Mail, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -26,24 +25,36 @@ export default function Login() {
   const [isRecoverOpen, setIsRecoverOpen] = useState(false);
   const [recoverEmail, setRecoverEmail] = useState('');
   const [isSending, setIsSending] = useState(false);
+  
+  // Estado de carga para el login
+  const [isLoading, setIsLoading] = useState(false);
 
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
-  const systemUsers = useAppStore((state) => state.systemUsers);
 
-  const handleLogin = (e: React.FormEvent) => {
+  // === LOGIN CONECTADO A SQL ===
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    const user = systemUsers.find(
-      (u) => u.username === username && u.password === password && u.status === 'Active'
-    );
+    if (!username || !password) {
+        toast.error("Por favor ingrese usuario y contraseña");
+        return;
+    }
 
-    if (user) {
-      login(user);
-      toast.success('Bienvenido al sistema DIDECO');
-      navigate('/');
-    } else {
-      toast.error('Credenciales inválidas o usuario inactivo');
+    setIsLoading(true);
+
+    try {
+      // Llamada al backend (main.js -> SQL Server)
+      await login({ username, password });
+      
+      // Si no lanza error, es éxito:
+      navigate('/'); 
+    } catch (error) {
+      console.error("Error en login:", error);
+      // El toast de error ya lo maneja el store, pero por seguridad:
+      // toast.error('Credenciales inválidas o error de servidor');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -53,26 +64,19 @@ export default function Login() {
       return;
     }
 
-    // 1. Buscar si el correo existe en nuestra "base de datos" local
-    const userFound = systemUsers.find(u => u.email && u.email.toLowerCase() === recoverEmail.toLowerCase());
-
-    if (!userFound) {
-      toast.error("Este correo no está registrado en el sistema.");
-      return;
-    }
-
     setIsSending(true);
 
-    // 2. Preparar el mensaje con los datos del usuario encontrado
-    const message = `Hola ${userFound.firstName},\n\n` +
-                    `Hemos recibido una solicitud para recuperar tu acceso al sistema DIDECO.\n` +
-                    `Tus credenciales actuales son:\n\n` +
-                    `Usuario: ${userFound.username}\n` +
-                    `Contraseña: ${userFound.password}\n\n` +
-                    `Te recomendamos cambiar tu contraseña si crees que ha sido vulnerada.`;
-
     try {
-      // 3. Enviar a través de Electron (Backend)
+      // NOTA: Como ahora usamos SQL, no tenemos la lista de usuarios localmente para buscar la contraseña.
+      // Para producción, deberías crear un endpoint '/api/recuperar' en el backend.
+      // Aquí mantenemos la lógica de envío IPC si tienes configurado el mailer en Electron,
+      // pero enviamos un mensaje genérico por seguridad.
+
+      const message = `Hola,\n\n` +
+                      `Hemos recibido una solicitud para recuperar tu acceso al sistema DIDECO.\n` +
+                      `Por seguridad, contacta al administrador del sistema para restablecer tu contraseña.\n\n` +
+                      `Si no solicitaste esto, ignora este mensaje.`;
+
       if (window.require) {
         const { ipcRenderer } = window.require('electron');
         const result = await ipcRenderer.invoke('send-email', {
@@ -87,12 +91,12 @@ export default function Login() {
           setRecoverEmail('');
         } else {
           console.error(result.error);
-          toast.error("Error técnico al enviar el correo. Verifique la consola o conexión.");
+          toast.error("Error técnico al enviar el correo.");
         }
       } else {
-        // Fallback solo para desarrollo en navegador web puro
-        console.log("Simulación de correo (No estás en Electron):", message);
-        toast.warning("Modo web: Correo simulado en consola. Usa la app de escritorio para envío real.");
+        // Fallback web
+        console.log("Simulación de correo:", message);
+        toast.success("Solicitud enviada (Simulación)");
         setIsRecoverOpen(false);
       }
 
@@ -112,6 +116,7 @@ export default function Login() {
           src="/assets/login-bg-community.jpg" 
           alt="Background" 
           className="w-full h-full object-cover"
+          onError={(e) => e.currentTarget.style.display = 'none'} // Fallback si no hay imagen
         />
         <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
       </div>
@@ -119,7 +124,17 @@ export default function Login() {
       <Card className="w-full max-w-md z-10 shadow-2xl border-slate-200">
         <CardHeader className="space-y-1 flex flex-col items-center text-center">
           <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center mb-4 shadow-lg">
-            <img src="/assets/dideco-logo_variant_1.png" alt="Logo" className="w-16 h-16 object-contain" />
+            {/* Si no tienes el logo, usa un texto o ícono */}
+            <img 
+                src="/assets/dideco-logo_variant_1.png" 
+                alt="DIDECO" 
+                className="w-16 h-16 object-contain"
+                onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    e.currentTarget.parentElement!.innerText = "D"; // Fallback visual
+                    e.currentTarget.parentElement!.className += " text-white text-3xl font-bold";
+                }} 
+            />
           </div>
           <CardTitle className="text-2xl font-bold text-slate-800">DIDECO</CardTitle>
           <CardDescription>Gestor de Ayudas Sociales</CardDescription>
@@ -134,6 +149,7 @@ export default function Login() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2">
@@ -146,6 +162,7 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  disabled={isLoading}
                   className="pr-10"
                 />
                 <Button
@@ -154,6 +171,7 @@ export default function Login() {
                   size="icon"
                   className="absolute right-0 top-0 h-full px-3 hover:bg-transparent text-slate-400 hover:text-slate-600"
                   onClick={() => setShowPassword(!showPassword)}
+                  disabled={isLoading}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
@@ -163,16 +181,23 @@ export default function Login() {
                   type="button"
                   onClick={() => setIsRecoverOpen(true)}
                   className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                  disabled={isLoading}
                 >
                   ¿Olvidó su contraseña?
                 </button>
               </div>
             </div>
-            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700">
-              Ingresar
+            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
+              {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Conectando...
+                  </>
+              ) : (
+                  "Ingresar"
+              )}
             </Button>
             <div className="text-center text-xs text-muted-foreground mt-4">
-              <p>Credenciales por defecto: admin / 123</p>
+              <p>Credenciales por defecto: admin / 1234</p>
             </div>
           </form>
         </CardContent>
@@ -211,6 +236,7 @@ export default function Login() {
               className="bg-blue-600 hover:bg-blue-700"
               disabled={isSending}
             >
+              {isSending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {isSending ? "Enviando..." : "Enviar Correo"}
             </Button>
           </DialogFooter>

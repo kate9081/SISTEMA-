@@ -21,182 +21,189 @@ import {
 import { toast } from 'sonner';
 import { Plus, Trash2, Edit, Settings, Save } from 'lucide-react';
 
-// Interfaces para manejo de datos
+// Interfaces para los datos que vienen de SQL
 interface BenefitItem {
-  id: number | string;
+  id: number; // ID real de SQL (int)
   nombre: string;
 }
 
 interface Category {
-  id: string;
+  id: string; // Nombre de la categoría (ej: "Aporte Economico")
   name: string;
-  items: { id: string; name: string }[];
+  items: BenefitItem[];
 }
 
 export default function BenefitsConfig() {
   const { user } = useAuthStore();
   
-  // PERMISOS
+  // Permisos del usuario
   const p = user?.permissions || { create: false, read: false, update: false, delete: false };
-  const canView = p.read || p.create || p.update || p.delete;
   const canCreate = p.create;
   const canUpdate = p.update;
   const canDelete = p.delete;
 
-  // ESTADOS
+  // Estados
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // ESTADOS DEL MODAL
+  // Estados para el Modal (Agregar/Editar)
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
-  const [editingItem, setEditingItem] = useState<{id: string, name: string} | null>(null);
+  const [editingItem, setEditingItem] = useState<BenefitItem | null>(null);
   const [itemName, setItemName] = useState('');
 
-  // 1. CARGAR DATOS REALES DEL SERVIDOR
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  // 1. CARGAR DATOS (SELECT * FROM SQL)
+  const fetchFromSQL = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('http://localhost:3001/api/ayudas');
-      if (!response.ok) throw new Error("Error de conexión");
+      const res = await fetch('http://localhost:3001/api/ayudas'); // Tu API
+      if (!res.ok) throw new Error("Error al cargar");
       
-      const data = await response.json();
+      const data = await res.json();
       
-      // Transformar datos del backend al formato visual
+      // Transformar el objeto { "Categoria": [items] } al formato de la lista
       const formatted: Category[] = Object.entries(data).map(([catName, items]: [string, any]) => ({
         id: catName,
         name: catName,
-        items: items.map((i: BenefitItem) => ({ 
-            id: String(i.id), 
-            name: i.nombre 
+        items: items.map((i: any) => ({ 
+            id: i.id,      // ID numérico de SQL
+            nombre: i.nombre 
         }))
       }));
       setCategories(formatted);
-    } catch (error) {
-      console.error(error);
-      toast.error("No se pudo conectar con la base de datos local");
+    } catch (e) {
+      console.error(e);
+      toast.error("No se pudo cargar la base de datos.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 2. FUNCIÓN PARA GUARDAR CAMBIOS MASIVOS (Editar/Eliminar)
-  const syncWithServer = async (newCategories: Category[]) => {
-    // Convertir de vuelta al formato de base de datos
-    const payload: Record<string, any[]> = {};
-    newCategories.forEach(cat => {
-        payload[cat.name] = cat.items.map(i => ({
-            id: Number(i.id) || Date.now(),
-            nombre: i.name
-        }));
-    });
+  // Cargar al iniciar
+  useEffect(() => {
+    fetchFromSQL();
+  }, []);
 
-    try {
-        await fetch('http://localhost:3001/api/ayudas/guardar', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        setCategories(newCategories);
-        return true;
-    } catch (error) {
-        toast.error("Error al guardar en disco");
-        return false;
+  // 2. ABRIR MODAL
+  const handleOpenDialog = (categoryName: string, item?: BenefitItem) => {
+    // Verificación de permisos antes de abrir el diálogo
+    if (item && !canUpdate) {
+        toast.error("No tienes permiso para editar.");
+        return;
     }
-  };
+    if (!item && !canCreate) {
+        toast.error("No tienes permiso para crear.");
+        return;
+    }
 
-  // 3. ABRIR MODAL
-  const handleOpenDialog = (categoryId: string, item?: {id: string, name: string}) => {
-    if (item && !canUpdate) return;
-    if (!item && !canCreate) return;
-
-    setEditingCategory(categoryId);
+    setEditingCategory(categoryName);
     if (item) {
+      // Modo Edición
       setEditingItem(item);
-      setItemName(item.name);
+      setItemName(item.nombre);
     } else {
+      // Modo Crear
       setEditingItem(null);
       setItemName('');
     }
     setIsDialogOpen(true);
   };
 
-  // 4. GUARDAR (NUEVO O EDITAR)
+  // 3. GUARDAR (INSERT O UPDATE EN SQL)
   const handleSave = async () => {
-    if (!itemName || !editingCategory) return;
+    if (!itemName.trim() || !editingCategory) return;
 
-    // A) SI ES NUEVO ITEM -> Usamos /api/ayudas/agregar
-    if (!editingItem) {
-        try {
-            const res = await fetch('http://localhost:3001/api/ayudas/agregar', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ categoria: editingCategory, nombreItem: itemName })
-            });
-            if (res.ok) {
-                toast.success('Guardado correctamente');
-                fetchData(); // Recargar datos
-                setIsDialogOpen(false);
-            } else {
-                toast.error('Error al guardar');
-            }
-        } catch (e) { toast.error('Error de conexión'); }
+    // Doble verificación de permisos al intentar guardar
+    if (editingItem && !canUpdate) return;
+    if (!editingItem && !canCreate) return;
+
+    try {
+      if (editingItem) {
+        // === MODO EDITAR (UPDATE) ===
+        const response = await fetch('http://localhost:3001/api/ayudas/editar', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            id: editingItem.id,     // Enviamos el ID real
+            nombreItem: itemName    // Enviamos el nuevo nombre
+          })
+        });
+
+        if (response.ok) {
+          toast.success("Beneficio actualizado correctamente");
+        } else {
+          throw new Error("Error al actualizar");
+        }
+
+      } else {
+        // === MODO CREAR (INSERT) ===
+        const response = await fetch('http://localhost:3001/api/ayudas/agregar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            categoria: editingCategory, 
+            nombreItem: itemName 
+          })
+        });
+
+        if (response.ok) {
+          toast.success("Beneficio agregado correctamente");
+        } else {
+          throw new Error("Error al agregar");
+        }
+      }
+
+      // Cerrar modal y recargar lista real
+      setIsDialogOpen(false);
+      fetchFromSQL();
+
+    } catch (error) {
+      console.error(error);
+      toast.error("Error al guardar en la base de datos");
+    }
+  };
+
+  // 4. ELIMINAR (DELETE EN SQL)
+  const handleDelete = async (itemId: number) => {
+    if (!canDelete) {
+        toast.error("No tienes permiso para eliminar.");
         return;
     }
 
-    // B) SI ES EDITAR -> Modificamos local y sincronizamos todo
-    const updatedCategories = [...categories];
-    const catIndex = updatedCategories.findIndex(c => c.id === editingCategory);
-    if (catIndex === -1) return;
+    if (!confirm('¿Estás seguro de eliminar este beneficio permanentemente?')) return;
 
-    const cat = { ...updatedCategories[catIndex] };
-    cat.items = cat.items.map(i => i.id === editingItem.id ? { ...i, name: itemName } : i);
-    updatedCategories[catIndex] = cat;
+    try {
+      const response = await fetch(`http://localhost:3001/api/ayudas/borrar/${itemId}`, {
+        method: 'DELETE'
+      });
 
-    if (await syncWithServer(updatedCategories)) {
-        toast.success('Actualizado');
-        setIsDialogOpen(false);
+      if (response.ok) {
+        toast.success("Beneficio eliminado");
+        fetchFromSQL(); // Recargar lista
+      } else {
+        throw new Error("Error al eliminar");
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("No se pudo eliminar el registro");
     }
   };
 
-  // 5. ELIMINAR
-  const handleDelete = async (categoryId: string, itemId: string) => {
-    if (!canDelete) return;
-    if (!confirm('¿Eliminar permanentemente?')) return;
-
-    const updatedCategories = [...categories];
-    const catIndex = updatedCategories.findIndex(c => c.id === categoryId);
-    if (catIndex === -1) return;
-
-    const cat = { ...updatedCategories[catIndex] };
-    cat.items = cat.items.filter(i => i.id !== itemId);
-    updatedCategories[catIndex] = cat;
-
-    if (await syncWithServer(updatedCategories)) {
-        toast.success('Eliminado');
-    }
-  };
-
-  if (!canView) return <MainLayout><div className="center h-full">Acceso denegado</div></MainLayout>;
-
-  // Filtrado visual
+  // Filtrado visual (Buscador)
   const filteredCategories = categories.map(cat => ({
     ...cat,
-    items: cat.items.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    items: cat.items.filter(item => item.nombre.toLowerCase().includes(searchTerm.toLowerCase()))
   })).filter(cat => cat.items.length > 0 || searchTerm === '');
 
   return (
     <MainLayout>
       <div className="space-y-6">
         <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-bold tracking-tight">Mantenedor de Ayudas (Beneficios)</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Mantenedor de Ayudas (SQL Server)</h2>
         </div>
 
+        {/* Buscador */}
         <div className="bg-white p-4 rounded-lg border shadow-sm">
           <SearchInput 
             value={searchTerm} 
@@ -205,8 +212,9 @@ export default function BenefitsConfig() {
           />
         </div>
 
+        {/* Lista de Categorías */}
         <div className="bg-white rounded-lg border p-4">
-          {isLoading ? <div className="p-10 text-center text-gray-500">Cargando datos...</div> : (
+          {isLoading ? <div className="p-8 text-center text-gray-500">Cargando datos desde SQL...</div> : (
           <Accordion type="multiple" className="w-full">
             {filteredCategories.map((category) => (
               <AccordionItem key={category.id} value={category.id}>
@@ -220,41 +228,42 @@ export default function BenefitsConfig() {
                   </div>
                 </AccordionTrigger>
                 <AccordionContent>
-                  <div className="space-y-2 pl-4 pr-2">
+                  <div className="space-y-2 pl-4 pr-2 pt-2">
                     
-                    {/* BOTÓN AGREGAR ITEM (VISUALMENTE DISPONIBLE EN CADA CATEGORIA) */}
+                    {/* Botón Agregar - Solo visible si canCreate es true */}
                     {canCreate && (
-                        <div className="flex justify-end mb-2 pt-2">
-                        <Button size="sm" variant="outline" onClick={() => handleOpenDialog(category.id)} className="border-blue-200 text-blue-700 hover:bg-blue-50">
-                            <Plus className="h-3 w-3 mr-1" /> Agregar a {category.name}
+                        <div className="flex justify-end mb-2">
+                        <Button size="sm" variant="outline" onClick={() => handleOpenDialog(category.name)} className="text-blue-600 border-blue-200 hover:bg-blue-50">
+                            <Plus className="h-3 w-3 mr-1" /> Agregar Item
                         </Button>
                         </div>
                     )}
 
+                    {/* Lista de Items */}
                     {category.items.map((item, index) => (
-                      <div key={item.id} className="flex items-center justify-between p-2 bg-slate-50 rounded border group hover:bg-slate-100 transition-colors">
+                      <div key={item.id} className="flex items-center justify-between p-3 bg-slate-50 rounded border group hover:bg-white hover:shadow-sm transition-all">
                         <div className="flex items-center gap-3">
                           <span className="text-slate-400 font-mono text-xs w-6">{index + 1}</span>
-                          <span className="text-sm font-medium">{item.name}</span>
+                          <span className="font-medium text-slate-700">{item.nombre}</span>
                         </div>
                         
-                        {(canUpdate || canDelete) && (
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* Botones de Acción (Editar / Borrar) */}
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             {canUpdate && (
-                                <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-blue-600" onClick={() => handleOpenDialog(category.id, item)}>
-                                    <Edit className="h-3 w-3" />
+                                <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-blue-600 hover:bg-blue-50" onClick={() => handleOpenDialog(category.name, item)}>
+                                    <Edit className="h-4 w-4" />
                                 </Button>
                             )}
+                            
                             {canDelete && (
-                                <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => handleDelete(category.id, item.id)}>
-                                    <Trash2 className="h-3 w-3" />
+                                <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDelete(item.id)}>
+                                    <Trash2 className="h-4 w-4" />
                                 </Button>
                             )}
-                            </div>
-                        )}
+                        </div>
                       </div>
                     ))}
-                    {category.items.length === 0 && <div className="text-xs text-gray-400 italic p-2">Sin items.</div>}
+                    {category.items.length === 0 && <div className="text-sm text-gray-400 italic text-center py-2">Sin items registrados.</div>}
                   </div>
                 </AccordionContent>
               </AccordionItem>
@@ -263,26 +272,25 @@ export default function BenefitsConfig() {
           )}
         </div>
 
+        {/* Modal (Dialogo) */}
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingItem ? 'Editar Beneficio' : `Agregar a ${editingCategory}`}</DialogTitle>
             </DialogHeader>
-            <div className="py-4 space-y-4">
-              <div className="space-y-2">
-                  <Label>Nombre del Beneficio</Label>
-                  <Input 
-                    value={itemName} 
-                    onChange={e => setItemName(e.target.value)} 
-                    placeholder="Escribe el nombre aquí..."
-                    autoFocus
-                  />
-              </div>
+            <div className="py-4">
+              <Label>Nombre del Beneficio</Label>
+              <Input 
+                value={itemName} 
+                onChange={e => setItemName(e.target.value)} 
+                className="mt-2"
+                placeholder="Ej: Subsidio de arriendo..."
+              />
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancelar</Button>
               <Button onClick={handleSave} className="bg-blue-600 hover:bg-blue-700">
-                <Save className="w-4 h-4 mr-2" /> Guardar
+                <Save className="mr-2 h-4 w-4" /> Guardar
               </Button>
             </DialogFooter>
           </DialogContent>
