@@ -1,7 +1,7 @@
 {
   "name": "sistema-dideco",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.4",
   "type": "module",
   "main": "electron/main.js",
   "author": "Municipalidad San Pedro",
@@ -11,9 +11,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
-    "electron:build": "vite build && electron-builder"
+    "dist": "npm run build && electron-builder"
   },
-  "build": {
+"build": {
     "appId": "com.dideco.app",
     "productName": "Sistema DIDECO",
     "directories": {
@@ -22,11 +22,20 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "server/**/*",
       "package.json"
     ],
+    "asar": false,
     "win": {
       "target": "nsis",
-      "icon": "public/assets/dideco-logo.png"
+      "icon": "public/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     }
   },
   "dependencies": {

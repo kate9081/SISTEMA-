@@ -16,10 +16,13 @@ export interface InventoryItem {
   
   // Nuevos campos para Sincronización y Alertas
   category?: number;       
-  price?: number;          // Alias de purchasePrice para compatibilidad
-  criticalStock?: number;  // Para saber cuándo alertar (rojo)
+  price?: number;          // Alias de purchasePrice
+  criticalStock?: number;  // Para alertas
+  
+  // Campos auxiliares para compatibilidad con el código
+  name?: string;           // Alias de description
+  quantity?: number;       // Alias de stock
 }
-
 
 export interface Professional {
   rut: string;
@@ -28,6 +31,10 @@ export interface Professional {
   position: string;
   status: 'Active' | 'Inactive';
   email: string;
+  
+  // Campos opcionales requeridos por el código
+  id?: string | number;
+  phone?: string;
 }
 
 export interface SystemUserPermissions {
@@ -44,20 +51,36 @@ export interface SystemUser {
   position: string;
   status: 'Active' | 'Inactive';
   username: string;
-  password: string; // En una app real esto iría hasheado
-  email: string; // <--- CAMPO AGREGADO
+  password: string;
+  email: string; 
   permissions: SystemUserPermissions;
+  
+  // Campos opcionales
+  id?: string | number;
+  role?: string;
 }
+
+// Alias para compatibilidad con AuthStore
+export type User = SystemUser;
 
 export interface Beneficiary {
   rut: string;
   firstName: string;
-  paternalLastName: string;
-  maternalLastName: string;
+  
+  // Unificamos apellidos en uno solo para simplificar
+  lastName: string; 
+  
+  // Mantenemos estos opcionales por si acaso
+  paternalLastName?: string;
+  maternalLastName?: string;
+  
   address: string;
   phone: string;
   email: string;
-  // Campos opcionales por si la base de datos crece
+  
+  birthDate?: string;
+  registrationDate?: string;
+  
   id?: string;
 }
 
@@ -73,25 +96,24 @@ export interface BenefitCategory {
 }
 
 export interface AidRecord {
-  id: string;              // Único para poder eliminar/editar
-  folio: string;           // Cambiado a String para búsquedas flexibles
+  id: string;              
+  folio: string;           
   beneficiaryRut: string;
   beneficiaryName: string; 
   date: string;
   
-  aidType: string;         // Nombre de Categoría
-  product: string;         // Nombre del Item
+  aidType: string;         
+  product: string;         
 
-  
   quantity: number;
   value: number;
   detail: string;
-  observations?: string;   // NUEVO: Para observaciones en el recibo
+  observations?: string;   
   
   receiverName: string;
   
   professionalId: string;
-  professionalName: string; // Para mostrar en reportes sin hacer join
+  professionalName: string; 
 
   items?: {
     name: string;
@@ -100,10 +122,9 @@ export interface AidRecord {
     detail: string;
   }[];
   
-  // Campos opcionales para compatibilidad con Reportes y Filtros
-  notes?: string;          // Alias de observations o detail
-  categoryName?: string;   // Alias de aidType
-  itemName?: string;       // Alias de product
+  notes?: string;          
+  categoryName?: string;   
+  itemName?: string;       
   beneficiaryId?: string;
   categoryId?: string;
   itemId?: string;

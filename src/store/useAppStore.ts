@@ -63,6 +63,7 @@ const initialAdmin: SystemUser = {
   status: "Active",
   username: "admin",
   password: "123",
+  email: "informatica@munisanpedro.cl", //
   permissions: { create: true, read: true, update: true, delete: true },
 };
 

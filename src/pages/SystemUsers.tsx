@@ -135,7 +135,7 @@ export default function SystemUsers() {
     try {
       let url = 'http://localhost:3001/api/usuarios/agregar';
       let method = 'POST';
-      let payload = { ...formData };
+      let payload: any = { ...formData };
 
       if (editingItem) {
         url = 'http://localhost:3001/api/usuarios/editar';
